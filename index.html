@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wave Dash - Achievement Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', sans-serif; color: white; user-select: none; }
+        canvas { display: block; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; z-index: 100; }
+        
+        #progress-container { position: absolute; top: 0; left: 0; width: 100%; height: 6px; background: rgba(255, 255, 255, 0.1); display: none; }
+        #progress-bar { height: 100%; width: 0%; transition: width 0.3s; }
+
+        .screen { 
+            background: rgba(0, 0, 0, 0.95); padding: 30px; border-radius: 15px; 
+            text-align: center; border: 3px solid #00ffcc; pointer-events: auto; 
+            box-shadow: 0 0 40px rgba(0, 255, 204, 0.2); width: 420px;
+        }
+        h1 { margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 4px; color: #00ffcc; font-size: 2rem; }
+        h3 { margin: 15px 0 5px 0; text-transform: uppercase; font-size: 0.8rem; color: #888; }
+        
+        .selection-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 5px; }
+        .option-card { 
+            border: 2px solid rgba(255, 255, 255, 0.1); border-radius: 8px; 
+            padding: 5px; cursor: pointer; background: rgba(255, 255, 255, 0.03);
+            display: flex; flex-direction: column; justify-content: center; align-items: center; aspect-ratio: 1/1;
+            position: relative;
+        }
+        .option-card.selected { border-color: #00ffcc; background: rgba(0, 255, 204, 0.1); }
+        .option-card.locked { opacity: 0.3; cursor: not-allowed; filter: grayscale(1); }
+        .lock-text { position: absolute; bottom: -12px; font-size: 10px; color: #ff3366; font-weight: bold; width: 100%; }
+
+        .preview-mini { width: 30px; height: 30px; }
+        .color-dot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid white; }
+
+        button { 
+            width: 100%; padding: 15px; font-size: 1.2rem; font-weight: bold; 
+            color: #111; background-color: #00ffcc; border: none; 
+            cursor: pointer; text-transform: uppercase; border-radius: 5px; margin-top: 15px;
+        }
+        .secondary-btn { background-color: transparent; color: #888; border: 2px solid #444; font-size: 1rem; }
+
+        #score-display { position: absolute; top: 25px; left: 25px; font-size: 2.5rem; font-weight: bold; display: none; text-shadow: 2px 2px #000; }
+        
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: inset 0 0 30px rgba(255, 255, 255, 0.1); }
+            50% { box-shadow: inset 0 0 60px rgba(255, 255, 255, 0.4); }
+        }
+        .max-speed-active { animation: pulseGlow 1.5s infinite ease-in-out; }
+    </style>
+</head>
+<body id="game-body">
+
+    <div id="progress-container"><div id="progress-bar"></div></div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="score-display">0</div>
+
+    <div id="ui-layer">
+        <div id="start-screen" class="screen">
+            <h1>WAVE DASH</h1>
+            <div style="color: #ffd700; font-weight: bold; margin-bottom: 10px;">PERSONAL BEST: <span id="best-start">0</span></div>
+            
+            <h3>1. Choose Shape</h3>
+            <div id="shape-grid" class="selection-grid"></div>
+
+            <h3>2. Choose Color</h3>
+            <div id="color-grid" class="selection-grid"></div>
+
+            <button id="start-btn">Launch Wave</button>
+        </div>
+
+        <div id="game-over-screen" class="screen" style="display: none;">
+            <h1 style="color: #ff3366; border-color: #ff3366;">CRASHED</h1>
+            <p style="font-size: 1.5rem; margin: 5px 0;">Score: <span id="final-score">0</span></p>
+            <button id="restart-btn">Quick Retry</button>
+            <button id="home-btn" class="secondary-btn">Main Menu</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const body = document.getElementById('game-body');
+        
+        const ui = {
+            start: document.getElementById('start-screen'),
+            over: document.getElementById('game-over-screen'),
+            score: document.getElementById('score-display'),
+            finalScore: document.getElementById('final-score'),
+            bestStart: document.getElementById('best-start'),
+            startBtn: document.getElementById('start-btn'),
+            restartBtn: document.getElementById('restart-btn'),
+            homeBtn: document.getElementById('home-btn'),
+            progressBar: document.getElementById('progress-bar'),
+            shapeGrid: document.getElementById('shape-grid'),
+            colorGrid: document.getElementById('color-grid')
+        };
+
+        const SHAPES = [
+            { req: 0, draw: (c) => { c.moveTo(18,0); c.lineTo(-12,12); c.lineTo(-12,-12); } },
+            { req: 0, draw: (c) => { c.moveTo(15,0); c.lineTo(0,15); c.lineTo(-15,0); c.lineTo(0,-15); } },
+            { req: 0, draw: (c) => { for(let i=0; i<6; i++) { let a = i*Math.PI/3; c.lineTo(15*Math.cos(a), 15*Math.sin(a)); } } },
+            { req: 20, draw: (c) => { c.moveTo(18,0); c.lineTo(-10,14); c.lineTo(-3,0); c.lineTo(-10,-14); } },
+            { req: 50, draw: (c) => { c.rect(-12,-12,24,24); } }
+        ];
+
+        const COLORS = [
+            { hex: "#00ffcc", req: 0 },
+            { hex: "#ff3366", req: 0 },
+            { hex: "#ffd700", req: 0 },
+            { hex: "#a020f0", req: 30 },
+            { hex: "#32cd32", req: 70 }
+        ];
+
+        let highScore = parseInt(localStorage.getItem('waveBest')) || 0;
+        let selShape = 0, selColor = 0;
+        let gameState = 'START';
+        let score = 0, currentSpeed = 8, frames = 0, gridOffset = 0;
+        const maxSpeed = 15, HITBOX = 10;
+
+        let player = { x: 200, y: 0, isHolding: false, trail: [] };
+        let obstacles = [], pulses = [];
+
+        function resize() {
+            canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+            if(gameState === 'START') player.y = canvas.height/2;
+        }
+
+        function initMenu() {
+            ui.bestStart.innerText = highScore;
+            ui.shapeGrid.innerHTML = '';
+            ui.colorGrid.innerHTML = '';
+            
+            SHAPES.forEach((s, i) => {
+                const card = document.createElement('div');
+                const isLocked = highScore < s.req;
+                card.className = `option-card ${i==selShape?'selected':''} ${isLocked?'locked':''}`;
+                
+                const pre = document.createElement('canvas');
+                pre.className = 'preview-mini'; pre.width = 40; pre.height = 40;
+                card.appendChild(pre);
+                if(isLocked) card.innerHTML += `<div class="lock-text">${s.req}</div>`;
+                
+                if(!isLocked) {
+                    card.onclick = () => {
+                        selShape = i;
+                        document.querySelectorAll('#shape-grid .option-card').forEach(c => c.classList.remove('selected'));
+                        card.classList.add('selected');
+                    };
+                }
+                ui.shapeGrid.appendChild(card);
+                const pCtx = pre.getContext('2d');
+                pCtx.translate(20,20); pCtx.rotate(Math.PI/4); pCtx.strokeStyle="white"; pCtx.lineWidth=3;
+                pCtx.beginPath(); s.draw(pCtx); pCtx.closePath(); pCtx.stroke();
+            });
+
+            COLORS.forEach((colorObj, i) => {
+                const card = document.createElement('div');
+                const isLocked = highScore < colorObj.req;
+                card.className = `option-card ${i==selColor?'selected':''} ${isLocked?'locked':''}`;
+                
+                const dot = document.createElement('div');
+                dot.className = 'color-dot'; dot.style.backgroundColor = colorObj.hex;
+                card.appendChild(dot);
+                if(isLocked) card.innerHTML += `<div class="lock-text">${colorObj.req}</div>`;
+                
+                if(!isLocked) {
+                    card.onclick = () => {
+                        selColor = i;
+                        document.querySelectorAll('#color-grid .option-card').forEach(c => c.classList.remove('selected'));
+                        card.classList.add('selected');
+                        updateTheme();
+                    };
+                }
+                ui.colorGrid.appendChild(card);
+            });
+            updateTheme();
+        }
+
+        function updateTheme() {
+            const c = COLORS[selColor].hex;
+            ui.startBtn.style.backgroundColor = c;
+            ui.start.style.borderColor = c;
+            ui.progressBar.style.backgroundColor = c;
+            ui.score.style.color = c;
+        }
+
+        function reset() {
+            gameState = 'PLAYING'; score = 0; currentSpeed = 8; frames = 0;
+            obstacles = []; pulses = []; player.trail = [];
+            player.y = canvas.height/2;
+            ui.score.style.display = 'block'; ui.start.style.display = 'none'; ui.over.style.display = 'none';
+            document.getElementById('progress-container').style.display = 'block';
+            updateTheme();
+        }
+
+        function update() {
+            if (gameState !== 'PLAYING') return;
+            player.y += player.isHolding ? -8 : 8;
+            player.trail.push({x: player.x, y: player.y});
+            player.trail.forEach(t => t.x -= currentSpeed);
+            if (player.trail.length > 60) player.trail.shift();
+            gridOffset = (gridOffset + currentSpeed) % 100;
+            
+            if (frames % Math.floor(1200/currentSpeed) === 0) {
+                const h = 50 + Math.random()*(canvas.height-250);
+                obstacles.push({x: canvas.width, y: 0, w: 70, h: h, score: true});
+                obstacles.push({x: canvas.width, y: h + 180, w: 70, h: canvas.height});
+            }
+
+            if (frames % 60 === 0) pulses.push({ r: 0, alpha: 0.6, speed: currentSpeed * 0.5 });
+            pulses.forEach(p => { p.r += p.speed; p.alpha -= 0.005; });
+            pulses = pulses.filter(p => p.alpha > 0);
+
+            ui.progressBar.style.width = ((currentSpeed-8)/7)*100 + "%";
+            if(currentSpeed >= maxSpeed) body.classList.add('max-speed-active');
+
+            obstacles.forEach(o => {
+                o.x -= currentSpeed;
+                if (player.x+HITBOX > o.x && player.x-HITBOX < o.x+o.w && player.y+HITBOX > o.y && player.y-HITBOX < o.y+o.h) gameState = 'GAMEOVER';
+                if (o.score && !o.passed && player.x > o.x+o.w) { 
+                    o.passed = true; score++; ui.score.innerText = score; 
+                    currentSpeed = Math.min(maxSpeed, currentSpeed+0.2); 
+                }
+            });
+
+            if (player.y < 0 || player.y > canvas.height) gameState = 'GAMEOVER';
+            if (gameState === 'GAMEOVER') {
+                if(score > highScore) { highScore = score; localStorage.setItem('waveBest', score); }
+                ui.finalScore.innerText = score; ui.over.style.display = 'block';
+            }
+            frames++;
+        }
+
+        function draw() {
+            ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            const color = COLORS[selColor].hex;
+            ctx.strokeStyle = '#111';
+            for(let x = -gridOffset; x < canvas.width; x += 100) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+            pulses.forEach(p => {
+                ctx.strokeStyle = color; ctx.globalAlpha = p.alpha; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(canvas.width/2, canvas.height/2, p.r, 0, Math.PI*2); ctx.stroke();
+            });
+            ctx.globalAlpha = 1;
+            if(gameState === 'START') return;
+            ctx.beginPath(); ctx.lineWidth = 8; ctx.strokeStyle = color; ctx.lineCap = 'round';
+            if(player.trail.length > 0) {
+                ctx.moveTo(player.trail[0].x, player.trail[0].y);
+                player.trail.forEach(t => ctx.lineTo(t.x, t.y)); ctx.stroke();
+            }
+            ctx.fillStyle = '#ff3366'; ctx.shadowBlur = 15; ctx.shadowColor = '#ff3366';
+            obstacles.forEach(o => ctx.fillRect(o.x, o.y, o.w, o.h));
+            ctx.shadowBlur = 0;
+            ctx.save(); ctx.translate(player.x, player.y); ctx.rotate(player.isHolding ? -Math.PI/4 : Math.PI/4);
+            ctx.fillStyle = 'white'; ctx.strokeStyle = color; ctx.lineWidth = 3;
+            ctx.beginPath(); SHAPES[selShape].draw(ctx); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+        }
+
+        function loop() { update(); draw(); requestAnimationFrame(loop); }
+        const input = (v) => { if(gameState === 'PLAYING') player.isHolding = v; };
+        window.addEventListener('keydown', e => { if(e.code === 'Space') input(true); });
+        window.addEventListener('keyup', e => { if(e.code === 'Space') input(false); });
+        canvas.addEventListener('mousedown', () => input(true)); canvas.addEventListener('mouseup', () => input(false));
+        ui.startBtn.onclick = reset; ui.restartBtn.onclick = reset;
+        ui.homeBtn.onclick = () => { gameState = 'START'; ui.over.style.display = 'none'; ui.start.style.display = 'block'; ui.score.style.display = 'none'; document.getElementById('progress-container').style.display = 'none'; body.classList.remove('max-speed-active'); initMenu(); };
+        window.addEventListener('resize', resize); resize(); initMenu(); loop();
+    </script>
+</body>
+</html>
